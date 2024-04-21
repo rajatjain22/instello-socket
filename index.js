@@ -9,7 +9,7 @@ import Conversations from "./schemas/ConversationModel.js";
 import Messages from "./schemas/MessageModel.js";
 import { getUnreadMessageCount } from "./utils/conversations.js";
 import { markReadMessage } from "./utils/messages.js";
-dotenv.config(); 
+dotenv.config();
 
 const PORT = process.env.PORT || 3001;
 const app = express();
@@ -177,10 +177,30 @@ io.on("connection", async (socket) => {
 
       const sender = users_array.find((e) => e.user_id === senderId);
       const receiver = users_array.find((e) => e.user_id === receiverId);
+      console.log(sender);
+      io.to(sender?.socket_id).emit("send_new_message", {
+        _id: saveMessage._id,
+        conversationId: newConversationId,
+        senderId,
+        receiverId,
+        type,
+        text,
+        avatar,
+        username,
+        file,
+      });
 
-      io.to(sender?.socket_id).emit("send_new_message", saveMessage);
-
-      io.to(receiver?.socket_id).emit("receive_new_message", saveMessage);
+      io.to(receiver?.socket_id).emit("receive_new_message", {
+        _id: saveMessage._id,
+        conversationId: newConversationId,
+        senderId,
+        receiverId,
+        type,
+        text,
+        avatar,
+        username,
+        file,
+      });
     }
   );
 
