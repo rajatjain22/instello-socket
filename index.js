@@ -9,7 +9,7 @@ import Conversations from "./schemas/ConversationModel.js";
 import Messages from "./schemas/MessageModel.js";
 import { getUnreadMessageCount } from "./utils/conversations.js";
 import { markReadMessage } from "./utils/messages.js";
-dotenv.config();
+dotenv.config(); 
 
 const PORT = process.env.PORT || 3001;
 const app = express();
