@@ -122,12 +122,13 @@ io.on("connection", async (socket) => {
   });
 
   socket?.on("get_messages", async ({ conversationId }, callback) => {
+    console.log("conversationId ===> ", conversationId);
     const allMessages = await Messages.find({ conversationId });
     callback(allMessages);
   });
 
   socket?.on(
-    "read_mssages",
+    "read_messages",
     async ({ conversationId, loggedUser }, callback) => {
       markReadMessage(conversationId, loggedUser);
       callback("read");
