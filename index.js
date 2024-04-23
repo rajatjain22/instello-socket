@@ -9,6 +9,8 @@ import Conversations from "./schemas/ConversationModel.js";
 import Messages from "./schemas/MessageModel.js";
 import { getUnreadMessageCount } from "./utils/conversations.js";
 import { markReadMessage } from "./utils/messages.js";
+import sharp from "sharp";
+import cloudinary from "./cloudnary/cloudConfig.js";
 dotenv.config();
 
 const PORT = process.env.PORT || 3001;
@@ -34,6 +36,44 @@ mongoose
   .catch((error) => {
     console.error("Error connecting to the database:", error.message);
   });
+
+const uploadFiles = async (files) => {
+  const uploadedFiles = Object.values(files);
+
+  const cloudinaryPromises = uploadedFiles.map(async (file) => {
+    const buffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
+
+    // Compressing and resizing with Sharp
+    const compressedImage = await sharp(buffer)
+      .resize(1024, 1024, { fit: "inside" }) // Resizes while keeping aspect ratio
+      .jpeg({ quality: 80 }) // Adjust quality (JPEG compression)
+      .toBuffer(); // Output as buffer
+
+    const base64Data = compressedImage.toString("base64");
+    const finalData = `data:image/jpg;base64,${base64Data}`;
+
+    const uploadMethod =
+      buffer.length > 10 * 1024 * 1024 ? "upload_large" : "upload";
+    console.log(buffer.length, 10 * 1024 * 1024);
+    let options = {
+      use_filename: true,
+      unique_filename: false,
+      overwrite: true,
+      folder: "Instello/Chat",
+      resource_type: "auto",
+    };
+
+    if (uploadMethod === "upload_large") {
+      return await cloudinary.uploader[uploadMethod](finalData, options);
+    } else {
+      return await cloudinary.uploader[uploadMethod](finalData, options);
+    }
+  });
+
+  const cloudinaryResponses = await Promise.all(cloudinaryPromises);
+  // // Respond with uploaded file URLs or other relevant data
+  return cloudinaryResponses.map((response) => response.secure_url);
+};
 
 let users_array = [];
 
@@ -135,6 +175,15 @@ io.on("connection", async (socket) => {
     }
   );
 
+  socket?.on("typing_message", async ({ senderId, receiverId }) => {
+    const sender = users_array.find((e) => e.user_id === senderId);
+    const receiver = users_array.find((e) => e.user_id === receiverId);
+
+    socket.to(receiver?.socket_id).emit("send_typing_message", {
+      message: "typing message...",
+    });
+  });
+
   socket.on(
     "send_message",
     async ({
@@ -145,63 +194,70 @@ io.on("connection", async (socket) => {
       username,
       type = "text",
       text,
-      file = "",
+      file = [],
     }) => {
-      let newConversationId = conversationId;
+      try {
+        let newConversationId = conversationId;
 
-      if (conversationId === "new") {
-        const participants = [senderId, receiverId];
-        const newConversations = new Conversations({ participants });
-        const conversation = await newConversations.save();
-        newConversationId = conversation?._id;
+        const secure_url = await uploadFiles(file);
+
+        if (conversationId === "new") {
+          const participants = [senderId, receiverId];
+          const newConversations = new Conversations({ participants });
+          const conversation = await newConversations.save();
+          newConversationId = conversation?._id;
+        }
+        const newMessage = new Messages({
+          conversationId: newConversationId,
+          senderId,
+          receiverId,
+          type,
+          text,
+          file: secure_url,
+        });
+
+        const saveMessage = await newMessage.save({
+          new: true,
+          validateModifiedOnly: true,
+        });
+
+        await Conversations.findByIdAndUpdate(newConversationId, {
+          $push: { messages: saveMessage._id },
+          $set: {
+            lastMessageCreatedAt: Date.now(),
+            lastMessage: saveMessage._id,
+          },
+        });
+
+        const sender = users_array.find((e) => e.user_id === senderId);
+        const receiver = users_array.find((e) => e.user_id === receiverId);
+
+        io.to(sender?.socket_id).emit("send_new_message", {
+          _id: saveMessage._id,
+          conversationId: newConversationId,
+          senderId,
+          receiverId,
+          type,
+          text,
+          avatar,
+          username,
+          file: secure_url,
+        });
+
+        io.to(receiver?.socket_id).emit("receive_new_message", {
+          _id: saveMessage._id,
+          conversationId: newConversationId,
+          senderId,
+          receiverId,
+          type,
+          text,
+          avatar,
+          username,
+          file: secure_url,
+        });
+      } catch (error) {
+        console.log("send_message Error:", error);
       }
-      const newMessage = new Messages({
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-      });
-
-      const saveMessage = await newMessage.save({
-        new: true,
-        validateModifiedOnly: true,
-      });
-
-      await Conversations.findByIdAndUpdate(newConversationId, {
-        $push: { messages: saveMessage._id },
-        $set: {
-          lastMessageCreatedAt: Date.now(),
-          lastMessage: saveMessage._id,
-        },
-      });
-
-      const sender = users_array.find((e) => e.user_id === senderId);
-      const receiver = users_array.find((e) => e.user_id === receiverId);
-      console.log(sender);
-      io.to(sender?.socket_id).emit("send_new_message", {
-        _id: saveMessage._id,
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-        avatar,
-        username,
-        file,
-      });
-
-      io.to(receiver?.socket_id).emit("receive_new_message", {
-        _id: saveMessage._id,
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-        avatar,
-        username,
-        file,
-      });
     }
   );
 
