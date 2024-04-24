@@ -170,7 +170,7 @@ io.on("connection", async (socket) => {
   socket?.on(
     "read_messages",
     async ({ conversationId, loggedUser }, callback) => {
-      markReadMessage(conversationId, loggedUser);
+      // markReadMessage(conversationId, loggedUser);
       callback("read");
     }
   );
@@ -187,6 +187,7 @@ io.on("connection", async (socket) => {
   socket.on(
     "send_message",
     async ({
+      newId,
       conversationId,
       senderId,
       receiverId,
@@ -197,64 +198,81 @@ io.on("connection", async (socket) => {
       file = [],
     }) => {
       try {
-        let newConversationId = conversationId;
-
-        const secure_url = await uploadFiles(file);
-
-        if (conversationId === "new") {
-          const participants = [senderId, receiverId];
-          const newConversations = new Conversations({ participants });
-          const conversation = await newConversations.save();
-          newConversationId = conversation?._id;
-        }
-        const newMessage = new Messages({
-          conversationId: newConversationId,
+        console.log({
+          newId,
+          conversationId,
           senderId,
           receiverId,
-          type,
+
           text,
-          file: secure_url,
         });
+        const newConversationId = false;
+        // let newConversationId = conversationId;
 
-        const saveMessage = await newMessage.save({
-          new: true,
-          validateModifiedOnly: true,
-        });
+        // if (conversationId === "new") {
+        //   const participants = [senderId, receiverId];
+        //   const newConversations = new Conversations({ participants });
+        //   const conversation = await newConversations.save();
+        //   newConversationId = conversation?._id;
+        // }
 
-        await Conversations.findByIdAndUpdate(newConversationId, {
-          $push: { messages: saveMessage._id },
-          $set: {
-            lastMessageCreatedAt: Date.now(),
-            lastMessage: saveMessage._id,
-          },
-        });
+        // const secure_url = await uploadFiles(file);
+
+        // const newMessage = new Messages({
+        //   conversationId: newConversationId,
+        //   senderId,
+        //   receiverId,
+        //   type,
+        //   text,
+        //   file: secure_url,
+        // });
+
+        // const saveMessage = await newMessage.save({
+        //   new: true,
+        //   validateModifiedOnly: true,
+        // });
+
+        // await Conversations.findByIdAndUpdate(newConversationId, {
+        //   $push: { messages: saveMessage._id },
+        //   $set: {
+        //     lastMessageCreatedAt: Date.now(),
+        //     lastMessage: saveMessage._id,
+        //   },
+        // });
 
         const sender = users_array.find((e) => e.user_id === senderId);
         const receiver = users_array.find((e) => e.user_id === receiverId);
 
-        io.to(sender?.socket_id).emit("send_new_message", {
-          _id: saveMessage._id,
-          conversationId: newConversationId,
-          senderId,
-          receiverId,
-          type,
-          text,
-          avatar,
-          username,
-          file: secure_url,
-        });
+        setTimeout(() => {
+          io.to(sender?.socket_id).emit("send_new_message", {
+            // _id: saveMessage?._id,
+            _id: "rajat",
+            newId,
+            conversationId: newConversationId || "Rajat",
+            senderId,
+            receiverId,
+            type,
+            text,
+            avatar,
+            username,
+            // file: secure_url,
+            send: false,
+          });
 
-        io.to(receiver?.socket_id).emit("receive_new_message", {
-          _id: saveMessage._id,
-          conversationId: newConversationId,
-          senderId,
-          receiverId,
-          type,
-          text,
-          avatar,
-          username,
-          file: secure_url,
-        });
+          io.to(receiver?.socket_id).emit("receive_new_message", {
+            // _id: saveMessage._id,
+            conversationId: newConversationId,
+            newId,
+            senderId,
+            receiverId,
+            type,
+            text,
+            avatar,
+            username,
+            // file: secure_url,
+            send: false,
+          });
+        }, 5000);
       } catch (error) {
         console.log("send_message Error:", error);
       }
