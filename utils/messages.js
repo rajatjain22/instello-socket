@@ -2,8 +2,17 @@ import Conversations from "../schemas/ConversationModel.js";
 import Messages from "../schemas/MessageModel.js";
 
 // Function to mark the last read message in a conversation
-const markReadMessage = async (conversationId, loggedUser) => {
+const markReadMessage = async (userId, loggedUser) => {
   try {
+    const existing_conversations = await Conversations.findOne({
+      participants: {
+        $size: 2,
+        $all: [userId, loggedUser],
+      },
+    });
+
+    let conversationId = existing_conversations?._id;
+
     // Fetch the most recent message for the conversation
     const latestMessage = await Messages.findOne({ conversationId })
       .sort({ createdAt: -1 })

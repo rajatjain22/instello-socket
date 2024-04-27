@@ -167,13 +167,10 @@ io.on("connection", async (socket) => {
     callback(allMessages);
   });
 
-  socket?.on(
-    "read_messages",
-    async ({ conversationId, loggedUser }, callback) => {
-      // markReadMessage(conversationId, loggedUser);
-      callback("read");
-    }
-  );
+  socket?.on("read_messages", async ({ userId, loggedUser }, callback) => {
+    markReadMessage(userId, loggedUser);
+    callback("read");
+  });
 
   socket?.on("typing_message", async ({ senderId, receiverId }) => {
     const sender = users_array.find((e) => e.user_id === senderId);
@@ -187,8 +184,6 @@ io.on("connection", async (socket) => {
   socket.on(
     "send_message",
     async ({
-      newId,
-      conversationId,
       senderId,
       receiverId,
       avatar,
@@ -196,6 +191,8 @@ io.on("connection", async (socket) => {
       type = "text",
       text,
       file = [],
+      newKey,
+      status,
     }) => {
       try {
         const existing_conversations = await Conversations.findOne({
@@ -205,21 +202,19 @@ io.on("connection", async (socket) => {
           },
         });
 
-        let newConversationId = "new";
+        let conversationId = existing_conversations?._id;
 
-        if (conversationId === "new" && !existing_conversations) {
+        if (!existing_conversations) {
           const participants = [senderId, receiverId];
           const newConversations = new Conversations({ participants });
           const conversation = await newConversations.save();
-          newConversationId = conversation._id; // Access _id directly
-        } else if (existing_conversations) {
-          newConversationId = existing_conversations._id;
+          conversationId = conversation._id;
         }
 
         const secure_url = await uploadFiles(file);
 
         const newMessage = new Messages({
-          conversationId: newConversationId,
+          conversationId,
           senderId,
           receiverId,
           type,
@@ -232,7 +227,7 @@ io.on("connection", async (socket) => {
           validateModifiedOnly: true,
         });
 
-        await Conversations.findByIdAndUpdate(newConversationId, {
+        await Conversations.findByIdAndUpdate(conversationId, {
           $push: { messages: saveMessage._id },
           $set: {
             lastMessageCreatedAt: Date.now(),
@@ -245,8 +240,8 @@ io.on("connection", async (socket) => {
 
         io.to(sender?.socket_id).emit("send_new_message", {
           _id: saveMessage?._id,
-          newId,
-          conversationId: newConversationId,
+          newKey,
+          conversationId,
           senderId,
           receiverId,
           type,
@@ -254,21 +249,22 @@ io.on("connection", async (socket) => {
           avatar,
           username,
           file: secure_url,
-          send: false,
+          status: false,
         });
 
+        const user = await Users.findById(senderId).select("username avatar");
         io.to(receiver?.socket_id).emit("receive_new_message", {
           _id: saveMessage._id,
-          conversationId: newConversationId,
-          newId,
+          conversationId,
+          newKey,
           senderId,
           receiverId,
           type,
           text,
-          avatar,
-          username,
+          avatar: user.avatar,
+          username: user.username,
           file: secure_url,
-          send: false,
+          status: false,
         });
       } catch (error) {
         console.log("send_message Error:", error);
@@ -307,47 +303,6 @@ app.get("/get_conversations/:userId", async (req, res) => {
       .populate("lastReadMessage")
       .sort({ lastMessageCreatedAt: -1 })
       .exec();
-
-    // const data = await Conversations.aggregate([
-    //   {
-    //     $match: {
-    //       participants: { $in: [new mongoose.Types.ObjectId(userId)] },
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "users",
-    //       localField: "participants",
-    //       foreignField: "_id",
-    //       as: "participants",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "messages",
-    //       localField: "lastMessage",
-    //       foreignField: "_id",
-    //       as: "lastMessage",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "messages",
-    //       localField: "lastReadMessage",
-    //       foreignField: "_id",
-    //       as: "lastReadMessage",
-    //     },
-    //   },
-    //   {
-    //     $project: {
-    //       _id: 1,
-    //       participants: { _id: 1, username: 1, avatar: 1, status: 1 },
-    //       lastMessageCreatedAt: 1,
-    //       lastReadMessage: { $arrayElemAt: ["$lastReadMessage", 0] },
-    //       lastMessage: { $arrayElemAt: ["$lastMessage", 0] },
-    //     },
-    //   },
-    // ]);
 
     const list = await Promise.all(
       existing_conversations.map(async (el) => {
