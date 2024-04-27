@@ -9,6 +9,8 @@ import Conversations from "./schemas/ConversationModel.js";
 import Messages from "./schemas/MessageModel.js";
 import { getUnreadMessageCount } from "./utils/conversations.js";
 import { markReadMessage } from "./utils/messages.js";
+import sharp from "sharp";
+import cloudinary from "./cloudnary/cloudConfig.js";
 dotenv.config();
 
 const PORT = process.env.PORT || 3001;
@@ -34,6 +36,44 @@ mongoose
   .catch((error) => {
     console.error("Error connecting to the database:", error.message);
   });
+
+const uploadFiles = async (files) => {
+  const uploadedFiles = Object.values(files);
+
+  const cloudinaryPromises = uploadedFiles.map(async (file) => {
+    const buffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
+
+    // Compressing and resizing with Sharp
+    const compressedImage = await sharp(buffer)
+      .resize(1024, 1024, { fit: "inside" }) // Resizes while keeping aspect ratio
+      .jpeg({ quality: 80 }) // Adjust quality (JPEG compression)
+      .toBuffer(); // Output as buffer
+
+    const base64Data = compressedImage.toString("base64");
+    const finalData = `data:image/jpg;base64,${base64Data}`;
+
+    const uploadMethod =
+      buffer.length > 10 * 1024 * 1024 ? "upload_large" : "upload";
+    console.log(buffer.length, 10 * 1024 * 1024);
+    let options = {
+      use_filename: true,
+      unique_filename: false,
+      overwrite: true,
+      folder: "Instello/Chat",
+      resource_type: "auto",
+    };
+
+    if (uploadMethod === "upload_large") {
+      return await cloudinary.uploader[uploadMethod](finalData, options);
+    } else {
+      return await cloudinary.uploader[uploadMethod](finalData, options);
+    }
+  });
+
+  const cloudinaryResponses = await Promise.all(cloudinaryPromises);
+  // // Respond with uploaded file URLs or other relevant data
+  return cloudinaryResponses.map((response) => response.secure_url);
+};
 
 let users_array = [];
 
@@ -122,85 +162,113 @@ io.on("connection", async (socket) => {
   });
 
   socket?.on("get_messages", async ({ conversationId }, callback) => {
+    console.log("conversationId ===> ", conversationId);
     const allMessages = await Messages.find({ conversationId });
     callback(allMessages);
   });
 
-  socket?.on(
-    "read_mssages",
-    async ({ conversationId, loggedUser }, callback) => {
-      markReadMessage(conversationId, loggedUser);
-      callback("read");
-    }
-  );
+  socket?.on("read_messages", async ({ userId, loggedUser }, callback) => {
+    markReadMessage(userId, loggedUser);
+    callback("read");
+  });
+
+  socket?.on("typing_message", async ({ senderId, receiverId }) => {
+    const sender = users_array.find((e) => e.user_id === senderId);
+    const receiver = users_array.find((e) => e.user_id === receiverId);
+
+    socket.to(receiver?.socket_id).emit("send_typing_message", {
+      message: "typing message...",
+    });
+  });
 
   socket.on(
     "send_message",
     async ({
-      conversationId,
       senderId,
       receiverId,
       avatar,
       username,
       type = "text",
       text,
-      file = "",
+      file = [],
+      newKey,
+      status,
     }) => {
-      let newConversationId = conversationId;
+      try {
+        const existing_conversations = await Conversations.findOne({
+          participants: {
+            $size: 2,
+            $all: [senderId, receiverId],
+          },
+        });
 
-      if (conversationId === "new") {
-        const participants = [senderId, receiverId];
-        const newConversations = new Conversations({ participants });
-        const conversation = await newConversations.save();
-        newConversationId = conversation?._id;
+        let conversationId = existing_conversations?._id;
+
+        if (!existing_conversations) {
+          const participants = [senderId, receiverId];
+          const newConversations = new Conversations({ participants });
+          const conversation = await newConversations.save();
+          conversationId = conversation._id;
+        }
+
+        const secure_url = await uploadFiles(file);
+
+        const newMessage = new Messages({
+          conversationId,
+          senderId,
+          receiverId,
+          type,
+          text,
+          file: secure_url,
+        });
+
+        const saveMessage = await newMessage.save({
+          new: true,
+          validateModifiedOnly: true,
+        });
+
+        await Conversations.findByIdAndUpdate(conversationId, {
+          $push: { messages: saveMessage._id },
+          $set: {
+            lastMessageCreatedAt: Date.now(),
+            lastMessage: saveMessage._id,
+          },
+        });
+
+        const sender = users_array.find((e) => e.user_id === senderId);
+        const receiver = users_array.find((e) => e.user_id === receiverId);
+
+        io.to(sender?.socket_id).emit("send_new_message", {
+          _id: saveMessage?._id,
+          newKey,
+          conversationId,
+          senderId,
+          receiverId,
+          type,
+          text,
+          avatar,
+          username,
+          file: secure_url,
+          status: false,
+        });
+
+        const user = await Users.findById(senderId).select("username avatar");
+        io.to(receiver?.socket_id).emit("receive_new_message", {
+          _id: saveMessage._id,
+          conversationId,
+          newKey,
+          senderId,
+          receiverId,
+          type,
+          text,
+          avatar: user.avatar,
+          username: user.username,
+          file: secure_url,
+          status: false,
+        });
+      } catch (error) {
+        console.log("send_message Error:", error);
       }
-      const newMessage = new Messages({
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-      });
-
-      const saveMessage = await newMessage.save({
-        new: true,
-        validateModifiedOnly: true,
-      });
-
-      await Conversations.findByIdAndUpdate(newConversationId, {
-        $push: { messages: saveMessage._id },
-        $set: {
-          lastMessageCreatedAt: Date.now(),
-          lastMessage: saveMessage._id,
-        },
-      });
-
-      const sender = users_array.find((e) => e.user_id === senderId);
-      const receiver = users_array.find((e) => e.user_id === receiverId);
-      console.log(sender);
-      io.to(sender?.socket_id).emit("send_new_message", {
-        _id: saveMessage._id,
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-        avatar,
-        username,
-        file,
-      });
-
-      io.to(receiver?.socket_id).emit("receive_new_message", {
-        _id: saveMessage._id,
-        conversationId: newConversationId,
-        senderId,
-        receiverId,
-        type,
-        text,
-        avatar,
-        username,
-        file,
-      });
     }
   );
 
@@ -236,47 +304,6 @@ app.get("/get_conversations/:userId", async (req, res) => {
       .sort({ lastMessageCreatedAt: -1 })
       .exec();
 
-    // const data = await Conversations.aggregate([
-    //   {
-    //     $match: {
-    //       participants: { $in: [new mongoose.Types.ObjectId(userId)] },
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "users",
-    //       localField: "participants",
-    //       foreignField: "_id",
-    //       as: "participants",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "messages",
-    //       localField: "lastMessage",
-    //       foreignField: "_id",
-    //       as: "lastMessage",
-    //     },
-    //   },
-    //   {
-    //     $lookup: {
-    //       from: "messages",
-    //       localField: "lastReadMessage",
-    //       foreignField: "_id",
-    //       as: "lastReadMessage",
-    //     },
-    //   },
-    //   {
-    //     $project: {
-    //       _id: 1,
-    //       participants: { _id: 1, username: 1, avatar: 1, status: 1 },
-    //       lastMessageCreatedAt: 1,
-    //       lastReadMessage: { $arrayElemAt: ["$lastReadMessage", 0] },
-    //       lastMessage: { $arrayElemAt: ["$lastMessage", 0] },
-    //     },
-    //   },
-    // ]);
-
     const list = await Promise.all(
       existing_conversations.map(async (el) => {
         const user = el.participants.find(
@@ -290,6 +317,7 @@ app.get("/get_conversations/:userId", async (req, res) => {
           avatar: user?.avatar,
           lastMessage: el?.lastMessage?.text,
           status: user?.status,
+          lastMessageType: el?.lastMessage?.type,
           lastMessageCreatedAt: el?.lastMessage?.createdAt ?? "",
           unreadCount:
             userId === el?.lastMessage?.senderId.toString()
