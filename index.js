@@ -9,7 +9,7 @@ import Conversations from "./schemas/ConversationModel.js";
 import Messages from "./schemas/MessageModel.js";
 import { getUnreadMessageCount } from "./utils/conversations.js";
 import { markReadMessage } from "./utils/messages.js";
-import sharp from "sharp";
+// import sharp from "sharp";
 import cloudinary from "./cloudnary/cloudConfig.js";
 dotenv.config();
 
@@ -44,12 +44,13 @@ const uploadFiles = async (files) => {
     const buffer = Buffer.isBuffer(file) ? file : Buffer.from(file);
 
     // Compressing and resizing with Sharp
-    const compressedImage = await sharp(buffer)
-      .resize(1024, 1024, { fit: "inside" }) // Resizes while keeping aspect ratio
-      .jpeg({ quality: 80 }) // Adjust quality (JPEG compression)
-      .toBuffer(); // Output as buffer
+    // const compressedImage = await sharp(buffer)
+    //   .resize(1024, 1024, { fit: "inside" }) // Resizes while keeping aspect ratio
+    //   .jpeg({ quality: 80 }) // Adjust quality (JPEG compression)
+    //   .toBuffer(); // Output as buffer
 
-    const base64Data = compressedImage.toString("base64");
+    // const base64Data = compressedImage.toString("base64");
+    const base64Data = buffer.toString("base64");
     const finalData = `data:image/jpg;base64,${base64Data}`;
 
     const uploadMethod =
