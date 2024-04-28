@@ -54,7 +54,7 @@ const uploadFiles = async (files) => {
 
     const uploadMethod =
       buffer.length > 10 * 1024 * 1024 ? "upload_large" : "upload";
-    console.log(buffer.length, 10 * 1024 * 1024);
+
     let options = {
       use_filename: true,
       unique_filename: false,
@@ -63,15 +63,19 @@ const uploadFiles = async (files) => {
       resource_type: "auto",
     };
 
-    if (uploadMethod === "upload_large") {
-      return await cloudinary.uploader[uploadMethod](finalData, options);
-    } else {
-      return await cloudinary.uploader[uploadMethod](finalData, options);
+    try {
+      const uploadResult = await cloudinary.uploader[uploadMethod](
+        finalData,
+        options
+      );
+      console.log("Uploaded successfully:");
+      return uploadResult;
+    } catch (error) {
+      console.error("Error during upload:", error);
     }
   });
 
   const cloudinaryResponses = await Promise.all(cloudinaryPromises);
-  // // Respond with uploaded file URLs or other relevant data
   return cloudinaryResponses.map((response) => response.secure_url);
 };
 
@@ -96,6 +100,7 @@ io.on("connection", async (socket) => {
           socket_id: socket.id,
         };
         users_array.push(user);
+        socket.broadcast.emit("userOnline", { userId: user_id });
         console.log("pushing user", user);
 
         io.emit("getUsers", users_array);
@@ -104,45 +109,6 @@ io.on("connection", async (socket) => {
       console.log(e);
     }
   }
-
-  // socket?.on("get_conversations", async ({ userId }, callback) => {
-  //   console.log(userId);
-  //   const existing_conversations = await Conversations.find({
-  //     participants: { $in: [userId] },
-  //   })
-  //     .populate("participants", "username avatar status")
-  //     .populate("lastMessage")
-  //     .populate("lastReadMessage")
-  //     .sort({ lastMessageCreatedAt: -1 })
-  //     .exec();
-
-  //   const list = await Promise.all(
-  //     existing_conversations.map(async (el) => {
-  //       const user = el.participants.find(
-  //         (elm) => elm._id.toString() !== userId
-  //       );
-
-  //       return {
-  //         id: el._id,
-  //         user_id: user?._id,
-  //         username: user?.username,
-  //         avatar: user?.avatar,
-  //         lastMessage: el?.lastMessage?.text,
-  //         status: user?.status,
-  //         lastMessageCreatedAt: el?.lastMessage?.createdAt ?? "",
-  //         unreadCount:
-  //           userId === el?.lastMessage?.senderId.toString()
-  //             ? 0
-  //             : await getUnreadMessageCount(
-  //                 el._id,
-  //                 el?.lastReadMessage?._id ?? null
-  //               ),
-  //       };
-  //     })
-  //   );
-
-  //   callback(list);
-  // });
 
   socket.on("follow_request", async ({ type, senderId, receiverId }) => {
     const sender = users_array.find((e) => e.user_id === senderId);
@@ -161,23 +127,24 @@ io.on("connection", async (socket) => {
     }
   });
 
-  socket?.on("get_messages", async ({ conversationId }, callback) => {
-    console.log("conversationId ===> ", conversationId);
-    const allMessages = await Messages.find({ conversationId });
-    callback(allMessages);
-  });
-
   socket?.on("read_messages", async ({ userId, loggedUser }, callback) => {
     markReadMessage(userId, loggedUser);
     callback("read");
   });
 
-  socket?.on("typing_message", async ({ senderId, receiverId }) => {
-    const sender = users_array.find((e) => e.user_id === senderId);
+  socket?.on("typing", async ({ senderId, receiverId }) => {
     const receiver = users_array.find((e) => e.user_id === receiverId);
-
-    socket.to(receiver?.socket_id).emit("send_typing_message", {
+    socket.to(receiver?.socket_id).emit("user_typing", {
       message: "typing message...",
+      senderId,
+    });
+  });
+
+  socket?.on("stop_typing", async ({ senderId, receiverId }) => {
+    const receiver = users_array.find((e) => e.user_id === receiverId);
+    socket.to(receiver?.socket_id).emit("user_stop_typing", {
+      message: "typing message...",
+      senderId,
     });
   });
 
@@ -282,59 +249,22 @@ io.on("connection", async (socket) => {
       await Users.findByIdAndUpdate(disconnectUser.user_id, {
         status: false,
       });
+      socket.broadcast.emit("userOffline", { userId: disconnectUser.user_id });
     }
     socket.disconnect();
   });
+
+  socket.on("end", async (id) => {
+    if (id) {
+      await Users.findByIdAndUpdate(id, { status: false });
+    }
+    console.log("closing connection");
+    socket.disconnect(0);
+  });
 });
 
-app.get("/get_conversations/:userId", async (req, res) => {
-  try {
-    const userId = req.params.userId;
-
-    if (!userId) {
-      return res.status(404).json({ message: "UserId not found" });
-    }
-
-    const existing_conversations = await Conversations.find({
-      participants: { $in: [userId] },
-    })
-      .populate("participants", "username avatar status")
-      .populate("lastMessage")
-      .populate("lastReadMessage")
-      .sort({ lastMessageCreatedAt: -1 })
-      .exec();
-
-    const list = await Promise.all(
-      existing_conversations.map(async (el) => {
-        const user = el.participants.find(
-          (elm) => elm._id.toString() !== userId
-        );
-
-        return {
-          id: el._id,
-          user_id: user?._id,
-          username: user?.username,
-          avatar: user?.avatar,
-          lastMessage: el?.lastMessage?.text,
-          status: user?.status,
-          lastMessageType: el?.lastMessage?.type,
-          lastMessageCreatedAt: el?.lastMessage?.createdAt ?? "",
-          unreadCount:
-            userId === el?.lastMessage?.senderId.toString()
-              ? 0
-              : await getUnreadMessageCount(
-                  el._id,
-                  el?.lastReadMessage?._id ?? null
-                ),
-        };
-      })
-    );
-
-    res.json(list);
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
+app.get("/", (req, res) => {
+  res.status(200).send("Hello World!");
 });
 
 httpServer.listen(PORT, () => {
