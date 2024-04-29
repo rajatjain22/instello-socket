@@ -29,11 +29,12 @@ const markReadMessage = async (userId, loggedUser) => {
     }
 
     // Update the 'lastReadMessage' field in the conversation
-    await Conversations.updateOne(
+    const updatedConversation = await Conversations.findOneAndUpdate(
       { _id: conversationId },
-      { $set: { lastReadMessage: latestMessage._id } }
+      { $set: { lastReadMessage: latestMessage._id } },
+      { new: true, useFindAndModify: false }
     );
-    return;
+    return updatedConversation;
   } catch (error) {
     console.error("Error in markReadMessage:", error.message);
   }
