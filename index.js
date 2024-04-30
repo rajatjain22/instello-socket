@@ -239,7 +239,7 @@ io.on("connection", async (socket) => {
     const updatedConversation = await markReadMessage(userId, loggedUser);
     const user = users_array.find((e) => e.user_id === userId);
     io.to(user?.socket_id).emit("seen_message", updatedConversation)
-    callback("read");
+    callback(updatedConversation);
   });
 
   socket.on("disconnect", async () => {
