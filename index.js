@@ -128,11 +128,6 @@ io.on("connection", async (socket) => {
     }
   });
 
-  socket?.on("read_messages", async ({ userId, loggedUser }, callback) => {
-    markReadMessage(userId, loggedUser);
-    callback("read");
-  });
-
   socket?.on("typing", async ({ senderId, receiverId }) => {
     const receiver = users_array.find((e) => e.user_id === receiverId);
     socket.to(receiver?.socket_id).emit("user_typing", {
@@ -239,6 +234,13 @@ io.on("connection", async (socket) => {
       }
     }
   );
+
+  socket?.on("read_messages", async ({ userId, loggedUser }, callback) => {
+    const updatedConversation = await markReadMessage(userId, loggedUser);
+    const user = users_array.find((e) => e.user_id === userId);
+    io.to(user?.socket_id).emit("seen_message", updatedConversation)
+    callback(updatedConversation);
+  });
 
   socket.on("disconnect", async () => {
     console.log("User disconnected", socket.id);
